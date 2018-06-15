@@ -37,32 +37,43 @@ import org.springframework.web.reactive.function.client.ExchangeFunction;
  */
 public class MetricsWebClientFilterFunction implements ExchangeFilterFunction {
 
+	private static final String WEBCLIENT_START_TIME_KEY = "WEBCLIENT_START_TIME";
+
 	private final MeterRegistry meterRegistry;
 
 	private final WebClientExchangeTagsProvider tagProvider;
 
 	private final String metricName;
 
-	public MetricsWebClientFilterFunction(MeterRegistry meterRegistry,
-			WebClientExchangeTagsProvider tagProvider, String metricName) {
+	public MetricsWebClientFilterFunction(
+			MeterRegistry meterRegistry,
+			WebClientExchangeTagsProvider tagProvider,
+			String metricName
+	) {
 		this.meterRegistry = meterRegistry;
 		this.tagProvider = tagProvider;
 		this.metricName = metricName;
 	}
 
 	@Override
-	public Mono<ClientResponse> filter(ClientRequest clientRequest,
-			ExchangeFunction exchangeFunction) {
-		long startTime = System.nanoTime();
+	public Mono<ClientResponse> filter(
+			ClientRequest clientRequest,
+			ExchangeFunction exchangeFunction
+	) {
 		return exchangeFunction.exchange(clientRequest)
-				.doOnSuccessOrError((clientResponse, throwable) -> {
-					Iterable<Tag> tags = this.tagProvider.tags(clientRequest,
-							clientResponse, throwable);
+				.subscriberContext((context) -> context.delete(WEBCLIENT_START_TIME_KEY))
+				.doOnEach((signal) -> {
+					ClientResponse clientResponse = signal.get();
+					Throwable throwable = signal.getThrowable();
+					Long startTime = signal.getContext().get(WEBCLIENT_START_TIME_KEY);
+
+					Iterable<Tag> tags = this.tagProvider.tags(clientRequest, clientResponse, throwable);
 					Timer.builder(this.metricName).tags(tags)
 							.description("Timer of WebClient operation")
 							.register(this.meterRegistry)
 							.record(System.nanoTime() - startTime, TimeUnit.NANOSECONDS);
-				});
+				})
+				.subscriberContext((context) -> context.put(WEBCLIENT_START_TIME_KEY, System.nanoTime()));
 	}
 
 }
